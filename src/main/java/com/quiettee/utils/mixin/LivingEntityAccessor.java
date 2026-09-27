@@ -1,14 +1,14 @@
 package com.quiettee.utils.mixin;
 
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.data.TrackedData;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.network.syncher.EntityDataAccessor;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(LivingEntity.class)
 public interface LivingEntityAccessor {
     @Accessor("LIVING_FLAGS")
-    static TrackedData<Byte> quiettee$livingFlags() {
+    static EntityDataAccessor<Byte> quiettee$livingFlags() {
         throw new AssertionError();
     }
 }

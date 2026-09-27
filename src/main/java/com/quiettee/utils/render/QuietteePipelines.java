@@ -1,8 +1,11 @@
 package com.quiettee.utils.render;
 
 import com.mojang.blaze3d.pipeline.BlendFunction;
+import com.mojang.blaze3d.pipeline.ColorTargetState;
+import com.mojang.blaze3d.pipeline.DepthStencilState;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.DepthTestFunction;
+import com.mojang.blaze3d.platform.CompareOp;
+import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
@@ -10,9 +13,8 @@ import com.quiettee.utils.QuietteeUtils;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.renderer.ExtendedRenderPipelineBuilder;
 import meteordevelopment.meteorclient.renderer.MeteorVertexFormats;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.UniformType;
-import net.minecraft.resource.ResourceManager;
+import net.minecraft.client.Minecraft;
+import net.minecraft.server.packs.resources.ResourceManager;
 import org.apache.commons.io.IOUtils;
 
 import java.io.IOException;
@@ -29,14 +31,13 @@ public abstract class QuietteePipelines {
 
     public static final RenderPipeline POST_CONTRAST = add(new ExtendedRenderPipelineBuilder(MESH_UNIFORMS)
         .withLocation(QuietteeUtils.identifier("pipeline/post/contrast"))
-        .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.DrawMode.TRIANGLES)
+        .withVertexFormat(MeteorVertexFormats.POS2, VertexFormat.Mode.TRIANGLES)
         .withVertexShader(MeteorClient.identifier("shaders/blur.vert"))
         .withFragmentShader(QuietteeUtils.identifier("shaders/contrast.frag"))
         .withSampler("u_Texture")
         .withUniform("ContrastData", UniformType.UNIFORM_BUFFER)
-        .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
-        .withDepthWrite(false)
-        .withBlend(BlendFunction.TRANSLUCENT)
+        .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false))
+        .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
         .withCull(false)
         .build()
     );
@@ -48,13 +49,11 @@ public abstract class QuietteePipelines {
 
     public static void precompile() {
         GpuDevice device = RenderSystem.getDevice();
-        ResourceManager resources = MinecraftClient.getInstance().getResourceManager();
+        ResourceManager resources = Minecraft.getInstance().getResourceManager();
 
         for (RenderPipeline pipeline : PIPELINES) {
             device.precompilePipeline(pipeline, (identifier, shaderType) -> {
-                var resource = resources.getResource(identifier).get();
-
-                try (var in = resource.getInputStream()) {
+                try (var in = resources.open(identifier)) {
                     return IOUtils.toString(in, StandardCharsets.UTF_8);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
