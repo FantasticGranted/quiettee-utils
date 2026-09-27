@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 @Mixin(Minecraft.class)
 public abstract class BoatShotInputMixin {
 
-    @WrapOperation(method="handleInputEvents", at=@At(value="INVOKE", target="Lnet/minecraft/client/network/MultiPlayerGameMode;stopUsingItem(Lnet/minecraft/entity/player/Player;)V"))
+    @WrapOperation(method="tick", at=@At(value="INVOKE", target="Lnet/minecraft/client/network/MultiPlayerGameMode;stopUsingItem(Lnet/minecraft/entity/player/Player;)V"))
     private void quiettee$keepAutomaticBow(MultiPlayerGameMode manager, Player player, Operation<Void> original) {
         BoatShot shot=BoatShot.active();
         if(shot==null || !shot.retainAutomaticDraw(player))original.call(manager,player);

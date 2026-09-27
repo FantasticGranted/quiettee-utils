@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.At;
 
 @Mixin(Player.class)
 public abstract class PlayerEntityMixin {
-    @ModifyReturnValue(method = "getBlockBreakingSpeed", at = @At("RETURN"))
+    @ModifyReturnValue(method = "getDestroySpeed", at = @At("RETURN"))
     private float quiettee$onGetBlockBreakingSpeed(float breakSpeed, BlockState block) {
         Player self = (Player) (Object) this;
         if (!self.level().isClientSide()) return breakSpeed;
