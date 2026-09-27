@@ -11,14 +11,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientPacketListener.class)
 public abstract class BoatPhaseNetworkMixin {
-    @Inject(method = "onVehicleMove", at = @At("HEAD"))
+    @Inject(method = "handleMoveVehicle", at = @At("HEAD"))
     private void quiettee$boatCorrectionBefore(ClientboundMoveVehiclePacket packet, CallbackInfo info) {
         if (!Minecraft.getInstance().isSameThread()) return;
         BoatPhase module = BoatPhase.active();
         if (module != null) module.beforeVehicleCorrection((ClientPacketListener) (Object) this, packet);
     }
 
-    @Inject(method = "onVehicleMove", at = @At("RETURN"))
+    @Inject(method = "handleMoveVehicle", at = @At("RETURN"))
     private void quiettee$boatCorrectionAfter(ClientboundMoveVehiclePacket packet, CallbackInfo info) {
         if (!Minecraft.getInstance().isSameThread()) return;
         BoatPhase module = BoatPhase.active();

@@ -20,11 +20,11 @@ public interface PlayerMoveC2SPacketAccessor {
     void quiettee$setZ(double z);
 
     @Mutable
-    @Accessor("yaw")
+    @Accessor("yRot")
     void quiettee$setYaw(float yaw);
 
     @Mutable
-    @Accessor("pitch")
+    @Accessor("xRot")
     void quiettee$setPitch(float pitch);
 
     @Mutable

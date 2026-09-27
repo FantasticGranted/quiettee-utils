@@ -13,10 +13,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Mixin(ClientPacketListener.class)
 public abstract class PlayerInfoConcurrencyMixin {
-    @Shadow @Final @Mutable private Map<UUID, PlayerInfo> playerListEntries;
+    @Shadow @Final @Mutable private Map<UUID, PlayerInfo> playerInfoMap;
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void quiettee$concurrentPlayerInfo(CallbackInfo ci) {
-        playerListEntries = new ConcurrentHashMap<>(playerListEntries);
+        playerInfoMap = new ConcurrentHashMap<>(playerInfoMap);
     }
 }

@@ -7,7 +7,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(LivingEntity.class)
 public interface LivingEntityAccessor {
-    @Accessor("LIVING_FLAGS")
+    @Accessor("DATA_LIVING_ENTITY_FLAGS")
     static EntityDataAccessor<Byte> quiettee$livingFlags() {
         throw new AssertionError();
     }

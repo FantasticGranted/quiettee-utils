@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.At;
 
 @Mixin(AbstractBoat.class)
 public abstract class BoatPhaseMixin {
-    @WrapOperation(method = "tick", at = @At(value = "INVOKE", target = "Lnet/minecraft/entity/vehicle/AbstractBoat;move(Lnet/minecraft/entity/MoverType;Lnet/minecraft/util/math/Vec3;)V"))
+    @WrapOperation(method = "tick", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;move(Lnet/minecraft/world/entity/MoverType;Lnet/minecraft/world/phys/Vec3;)V"))
     private void quiettee$boatMove(AbstractBoat boat, MoverType type, Vec3 movement, Operation<Void> original) {
         BoatPhase module = BoatPhase.active();
         if (module == null) {

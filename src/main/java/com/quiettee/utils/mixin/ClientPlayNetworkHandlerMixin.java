@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientPacketListener.class)
 public abstract class ClientPlayNetworkHandlerMixin {
-    @Inject(method = "onPlayerPositionLook", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/NetworkThreadUtils;forceMainThread(Lnet/minecraft/network/packet/Packet;Lnet/minecraft/network/listener/PacketListener;Lnet/minecraft/network/PacketApplyBatcher;)V", shift = At.Shift.AFTER))
+    @Inject(method = "handleMovePlayer", at = @At(value = "INVOKE", target = "Lnet/minecraft/network/protocol/PacketUtils;ensureRunningOnSameThread(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;Lnet/minecraft/network/PacketProcessor;)V", shift = At.Shift.AFTER))
     private void quiettee$onPlayerPositionLookHead(ClientboundPlayerPositionPacket packet, CallbackInfo ci,
           @Share("quietteeYaw") LocalFloatRef yawRef,
           @Share("quietteePitch") LocalFloatRef pitchRef,
@@ -41,7 +41,7 @@ public abstract class ClientPlayNetworkHandlerMixin {
         pitchRef.set(client.player.getXRot(0));
     }
 
-    @Inject(method = "onPlayerPositionLook", at = @At("RETURN"))
+    @Inject(method = "handleMovePlayer", at = @At("RETURN"))
     private void quiettee$onPlayerPositionLookReturn(ClientboundPlayerPositionPacket packet, CallbackInfo ci,
         @Share("quietteeYaw") LocalFloatRef yawRef,
         @Share("quietteePitch") LocalFloatRef pitchRef,
