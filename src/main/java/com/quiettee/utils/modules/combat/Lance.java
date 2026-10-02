@@ -159,6 +159,23 @@ public class Lance extends Module {
         .build()
     );
 
+    private final Setting<Boolean> limitMaxHeight = sgGeneral.add(new BoolSetting.Builder()
+        .name("limit-max-height")
+        .description("Stops you from flying above a set height.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> maxHeight = sgGeneral.add(new DoubleSetting.Builder()
+        .name("max-height")
+        .description("The max height that you will be able to reach.")
+        .defaultValue(500.0)
+        .min(-128)
+        .sliderMax(500)
+        .visible(limitMaxHeight::get)
+        .build()
+    );
+
     private final Setting<Boolean> follow = sgPerch.add(new BoolSetting.Builder()
         .name("follow")
         .description("Fly your real body after the victim.")
@@ -179,11 +196,21 @@ public class Lance extends Module {
 
     private final Setting<Double> followSpeed = sgPerch.add(new DoubleSetting.Builder()
         .name("follow-speed")
-        .description("Chase speed in blocks per tick.")
-        .defaultValue(3.0)
+        .description("Max chase speed in blocks per tick.")
+        .defaultValue(14.999)
         .min(0.5)
-        .max(3.0)
-        .sliderRange(0.5, 3.0)
+        .max(14.999)
+        .sliderRange(0.5, 14.999)
+        .visible(follow::get)
+        .build()
+    );
+
+    private final Setting<Double> followVerticalSpeed = sgPerch.add(new DoubleSetting.Builder()
+        .name("follow-vertical-speed")
+        .description("Max vertical chase speed in blocks per tick.")
+        .defaultValue(29.999)
+        .min(0.1)
+        .sliderRange(0.5, 29.999)
         .visible(follow::get)
         .build()
     );
@@ -440,6 +467,8 @@ public class Lance extends Module {
     private double parkX, parkY, parkZ;
     private double fVx, fVy, fVz;
     private boolean fActive, fVerticalActive;
+    private double fHRamp = 2.999, fVRamp = 7.999;
+    private int fHDelay, fVDelay;
     private final ArrayDeque<String> trace = new ArrayDeque<>();
     private final ArrayDeque<String> wireTrace = new ArrayDeque<>();
 
@@ -459,7 +488,7 @@ public class Lance extends Module {
     private PrintWriter dbgOut;
 
     public Lance() {
-        super(QuietteeUtils.CATEGORY, "lance", "Spear strikes from above on a ten tick beat.");
+        super(QuietteeUtils.CATEGORY, "lance", "Spear strikes from above on a ten tick beat.\nFrom: Quiettee");
     }
 
     @Override
@@ -738,8 +767,8 @@ public class Lance extends Module {
 
     private void followTick() {
         fActive = fVerticalActive = false;
-        if (selfWebHold || manualWebControl) return;
-        if (!follow.get() || target == null || !mc.player.isFallFlying()) return;
+        if (selfWebHold || manualWebControl) { resetFollowRamp(); return; }
+        if (!follow.get() || target == null || !mc.player.isFallFlying()) { resetFollowRamp(); return; }
         double lead = Math.min(5.0, PlayerUtils.getPing() / 50.0);
         parkX = vPos.x + vVel.x * lead;
         parkZ = vPos.z + vVel.z * lead;
@@ -752,26 +781,48 @@ public class Lance extends Module {
         double dx = parkX - mc.player.getX(), dz = parkZ - mc.player.getZ();
         double h = Math.sqrt(dx * dx + dz * dz);
         fVx = fVz = 0;
+        boolean wantH = h > 1.0;
+        if (wantH) {
+            if (fHDelay < 1) fHDelay++;
+            else fHRamp = approach(fHRamp, followSpeed.get());
+        } else {
+            fHRamp = Math.min(2.999, followSpeed.get());
+            fHDelay = 0;
+        }
         if (h > 1.0) {
-            double mv = Math.min(h - 1.0, followSpeed.get());
+            double mv = Math.min(h - 1.0, fHRamp);
             fVx = dx / h * mv;
             fVz = dz / h * mv;
         }
         fActive = true;
         fVy = 0;
         double dy = parkY - mc.player.getY();
-        if (horizontalPerch || Math.abs(dy) > 1.0) {
-
-            fVy = Mth.clamp(dy, -MAX_V, MAX_V);
+        boolean wantV = horizontalPerch || Math.abs(dy) > 1.0;
+        if (wantV) {
+            if (fVDelay < 1) fVDelay++;
+            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+        } else {
+            fVRamp = Math.min(7.999, followVerticalSpeed.get());
+            fVDelay = 0;
+        }
+        if (wantV) {
+            fVy = Mth.clamp(dy, -fVRamp, fVRamp);
             fVerticalActive = true;
         }
 
         if (cooldown > 0) { fVx *= 0.5; fVz *= 0.5; fVy = Mth.clamp(fVy, -0.8, 0.8); }
 
         if (Math.abs(fVy) > 0.4) {
-            double budgetH = Math.sqrt(Math.max(0, MAX_H * MAX_H - fVy * fVy));
+            double maxH = followSpeed.get();
+            double budgetH = Math.sqrt(Math.max(0, maxH * maxH - fVy * fVy));
             double fh = Math.sqrt(fVx * fVx + fVz * fVz);
             if (fh > budgetH && fh > 1e-6) { double s = budgetH / fh; fVx *= s; fVz *= s; }
+        }
+        if (limitMaxHeight.get() && fVy > 0) {
+            double lim = maxHeight.get();
+            double py = mc.player.getY();
+            if (py >= lim) fVy = 0;
+            else if (py + fVy > lim) fVy = lim - py;
         }
         if (horizontalPerch) {
 
@@ -780,6 +831,18 @@ public class Lance extends Module {
             fVx = safeStep.x; fVy = safeStep.y; fVz = safeStep.z;
         }
 
+    }
+
+    private void resetFollowRamp() {
+        fHRamp = Math.min(2.999, followSpeed.get());
+        fVRamp = Math.min(7.999, followVerticalSpeed.get());
+        fHDelay = 0;
+        fVDelay = 0;
+    }
+
+    private static double approach(double cur, double max) {
+        if (cur >= max) return max;
+        return cur + (max - cur) * 0.2;
     }
 
     private Vec3 safeHorizontalPerch(Vec3 overhead) {

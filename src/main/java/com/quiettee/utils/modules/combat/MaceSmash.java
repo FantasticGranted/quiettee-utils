@@ -46,6 +46,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.resources.Identifier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
@@ -175,9 +176,9 @@ public class MaceSmash extends Module {
     private final Setting<Double> followSpeed = sgTrack.add(new DoubleSetting.Builder()
         .name("follow-speed")
         .description("Max horizontal follow speed.")
-        .defaultValue(3.0)
+        .defaultValue(14.999)
         .min(0.1)
-        .sliderRange(0.5, 3)
+        .sliderRange(0.5, 14.999)
         .visible(follow::get)
         .build()
     );
@@ -213,10 +214,27 @@ public class MaceSmash extends Module {
     private final Setting<Double> followVerticalSpeed = sgTrack.add(new DoubleSetting.Builder()
         .name("follow-vertical-speed")
         .description("Max vertical follow speed.")
-        .defaultValue(1.5)
+        .defaultValue(29.999)
         .min(0.1)
-        .sliderRange(0.25, 3)
+        .sliderRange(0.5, 29.999)
         .visible(() -> follow.get() && followVertical.get() != VerticalFollow.Off)
+        .build()
+    );
+
+    private final Setting<Boolean> limitMaxHeight = sgTrack.add(new BoolSetting.Builder()
+        .name("limit-max-height")
+        .description("Stops you (and the ghost) from going above a set height.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> maxHeight = sgTrack.add(new DoubleSetting.Builder()
+        .name("max-height")
+        .description("The max height that you will be able to reach.")
+        .defaultValue(500.0)
+        .min(-128)
+        .sliderMax(500)
+        .visible(limitMaxHeight::get)
         .build()
     );
 
@@ -296,6 +314,15 @@ public class MaceSmash extends Module {
         .defaultValue(10)
         .min(1)
         .sliderRange(3, 50)
+        .build()
+    );
+
+    private final Setting<Double> minHeightAboveTarget = sgEngine.add(new DoubleSetting.Builder()
+        .name("min-height-above-target")
+        .description("Minimum height the ghost strikes from above the target. Higher hits harder.")
+        .defaultValue(0)
+        .min(0)
+        .sliderRange(0, 30)
         .build()
     );
 
@@ -614,6 +641,8 @@ public class MaceSmash extends Module {
     private boolean fHorizontal;
     private boolean fVertical;
     private boolean fMoving;
+    private double fHRamp = 2.999, fVRamp = 7.999;
+    private int fHDelay, fVDelay;
     private double serverDY;
 
     private int webDelayLeft;
@@ -690,7 +719,7 @@ public class MaceSmash extends Module {
     private int swings;
 
     public MaceSmash() {
-        super(QuietteeUtils.CATEGORY, "mace-smash", "Mace smash aura while hovering on an elytra.");
+        super(QuietteeUtils.CATEGORY, "mace-smash", "Mace smash aura while hovering on an elytra.\nFrom: Quiettee");
     }
 
     @Override
@@ -846,8 +875,8 @@ public class MaceSmash extends Module {
             double dx = e.getX() - mc.player.getX(), dz = e.getZ() - mc.player.getZ();
             double slack = locked ? 8 : 0;
             if (Math.sqrt(dx * dx + dz * dz) > followRange.get() + slack) return false;
-            if (Math.abs(e.getY() - mc.player.getY()) > maxDive.get() + reach.get() + 8 + slack) return false;
-        } else if (PlayerUtils.distanceTo(e) > maxDive.get() + reach.get() + 6) return false;
+            if (Math.abs(e.getY() - mc.player.getY()) > maxDiveEff() + reach.get() + 8 + slack) return false;
+        } else if (PlayerUtils.distanceTo(e) > maxDiveEff() + reach.get() + 6) return false;
 
         if (!locked && fov.get() < 360) {
             AABB b = e.getBoundingBox();
@@ -866,7 +895,7 @@ public class MaceSmash extends Module {
             Band band = band(e, EYE_GLIDING);
             if (band == null) return false;
             double idealRest = band.top - 0.3 + hop.get();
-            return Math.abs(idealRest - mc.player.getY()) <= maxDive.get() + 2;
+            return Math.abs(idealRest - mc.player.getY()) <= maxDiveEff() + 2;
         }
         return plan(e, phase == Phase.Descend ? cycleTop : offset) != null;
     }
@@ -915,26 +944,30 @@ public class MaceSmash extends Module {
             Band band = bandAt(b, EYE_GLIDING, 0);
             if (band == null) return null;
             double bot = Math.max(Math.max(band.bot + 0.2, b.minY + occamClearance.get() - EYE_GLIDING), webFloorY(b));
-            return new double[]{bot + 1.0 + oStrikeDip(0) + 0.1, band.top + maxDive.get()};
+            return new double[]{bot + 1.0 + oStrikeDip(0) + 0.1, band.top + maxDiveEff()};
         }
         if (chain()) {
             Band band = bandAt(b, EYE_GLIDING, 0);
             if (band == null) return null;
             double rest = band.top - 0.3 + baseHop();
-            return new double[]{rest - maxDive.get(), rest + maxDive.get()};
+            return new double[]{rest - maxDiveEff(), rest + maxDiveEff()};
         }
         Band band = bandAt(b, eyeHeight(), 0);
         if (band == null) return null;
-        return new double[]{band.bot + minDrop() + 0.1, band.top + maxDive.get()};
+        return new double[]{band.bot + minDrop() + 0.1, band.top + maxDiveEff()};
     }
 
     private boolean spaceFree(double x, double y, double z) {
-        return mc.level.noCollision(mc.player, mc.player.getBoundingBox().move(x - mc.player.getX(), y - mc.player.getY(), z - mc.player.getZ()));
+        AABB box = mc.player.getBoundingBox().move(x - mc.player.getX(), y - mc.player.getY(), z - mc.player.getZ());
+        for (VoxelShape shape : mc.level.getBlockCollisions(mc.player, box)) {
+            if (!shape.isEmpty()) return false;
+        }
+        return true;
     }
 
     private void followTick() {
         fHorizontal = fVertical = fMoving = false;
-        if (!follow.get() || target == null || !mc.player.isFallFlying()) return;
+        if (!follow.get() || target == null || !mc.player.isFallFlying()) { resetFollowRamp(); return; }
 
         double px = mc.player.getX(), py = mc.player.getY(), pz = mc.player.getZ();
         double lead = followLead.get();
@@ -943,9 +976,22 @@ public class MaceSmash extends Module {
         double dx = tx - px, dz = tz - pz;
         double h = Math.sqrt(dx * dx + dz * dz);
         double excess = h - followRadius.get();
+        boolean intersecting = mc.player.getBoundingBox().intersects(target.getBoundingBox());
         fVx = fVz = 0;
-        if (excess > 1e-3 && h > 1e-6) {
-            double mv = Math.min(excess, followSpeed.get());
+        boolean wantH = intersecting || excess > 1e-3;
+        if (wantH && h > 1e-6) {
+            if (fHDelay < 1) fHDelay++;
+            else fHRamp = approach(fHRamp, followSpeed.get());
+        } else {
+            fHRamp = Math.min(2.999, followSpeed.get());
+            fHDelay = 0;
+        }
+        if (intersecting && h > 1e-6) {
+            fVx = -dx / h * fHRamp;
+            fVz = -dz / h * fHRamp;
+            fMoving = true;
+        } else if (excess > 1e-3 && h > 1e-6) {
+            double mv = Math.min(excess, fHRamp);
             fVx = dx / h * mv;
             fVz = dz / h * mv;
             fMoving = true;
@@ -953,35 +999,88 @@ public class MaceSmash extends Module {
         fHorizontal = true;
 
         fVy = 0;
+        boolean wantV = false;
 
         VerticalFollow vf = followVertical.get();
         if (occam() && vf == VerticalFollow.Hold) vf = VerticalFollow.Window;
         if (vf != VerticalFollow.Off) {
-            double[] win = window(target);
-            if (win != null && win[1] > win[0]) {
-                double m = Math.min(2.0, (win[1] - win[0]) * 0.25);
-                double lo = win[0] + m, hi = win[1] - m;
-                double maxV = followVerticalSpeed.get();
-                if (vf == VerticalFollow.Hold) {
+            if (intersecting) {
+                double tyE = target.getBoundingBox().maxY + (target.getY() - target.yOld) * lead + followHeight.get();
+                double dyE = tyE - py;
+                if (fVDelay < 1) fVDelay++;
+                else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                if (Math.abs(dyE) > 0.5) fVy = Math.signum(dyE) * Math.min(Math.abs(dyE) - 0.5, fVRamp);
+                else fVy = Math.min(fVRamp, 1.0);
+                fVertical = true;
+                fMoving = true;
+                wantV = true;
+            } else {
+                double[] win = window(target);
+                if (win != null && win[1] > win[0]) {
+                    double m = Math.min(2.0, (win[1] - win[0]) * 0.25);
+                    double lo = win[0] + m, hi = win[1] - m;
+                    if (vf == VerticalFollow.Hold) {
 
-                    double ty = target.getBoundingBox().maxY + (target.getY() - target.yOld) * lead + followHeight.get();
-                    ty = Mth.clamp(ty, lo, hi);
-                    double dy = ty - py, tol = 0.5;
-                    if (Math.abs(dy) > tol) { fVy = Math.signum(dy) * Math.min(Math.abs(dy) - tol, maxV); fMoving = true; }
-                    fVertical = true;
-                } else {
-                    if (py < lo) { fVy = Math.min(maxV, lo - py); fVertical = true; }
-                    else if (py > hi) { fVy = -Math.min(maxV, py - hi); fVertical = true; }
-                    if (fVertical) fMoving = true;
+                        double ty = target.getBoundingBox().maxY + (target.getY() - target.yOld) * lead + followHeight.get();
+                        ty = Mth.clamp(ty, lo, hi);
+                        double dy = ty - py, tol = 0.5;
+                        if (Math.abs(dy) > tol) {
+                            if (fVDelay < 1) fVDelay++;
+                            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                            fVy = Math.signum(dy) * Math.min(Math.abs(dy) - tol, fVRamp);
+                            fMoving = true;
+                            wantV = true;
+                        }
+                        fVertical = true;
+                    } else {
+                        if (py < lo) {
+                            if (fVDelay < 1) fVDelay++;
+                            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                            fVy = Math.min(fVRamp, lo - py);
+                            fVertical = true;
+                            fMoving = true;
+                            wantV = true;
+                        } else if (py > hi) {
+                            if (fVDelay < 1) fVDelay++;
+                            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                            fVy = -Math.min(fVRamp, py - hi);
+                            fVertical = true;
+                            fMoving = true;
+                            wantV = true;
+                        }
+                    }
                 }
             }
+        }
+        if (!wantV) { fVRamp = Math.min(7.999, followVerticalSpeed.get()); fVDelay = 0; }
+
+        if (limitMaxHeight.get() && fVy > 0) {
+            double lim = maxHeight.get();
+            if (py >= lim) fVy = 0;
+            else if (py + fVy > lim) fVy = lim - py;
         }
 
         if ((fVx != 0 || fVz != 0) && !spaceFree(px + fVx, py + (fVertical ? fVy : 0), pz + fVz)) {
             fVx = fVz = 0;
-            if (!fVertical || fVy <= 0) { fVy = Math.min(followVerticalSpeed.get(), 1.0); fVertical = true; fMoving = true; }
+            if (!fVertical || fVy <= 0) { fVy = Math.min(fVRamp, 1.0); fVertical = true; fMoving = true; }
         }
         if (fVertical && !spaceFree(px, py + fVy, pz)) fVertical = false;
+    }
+
+    private void resetFollowRamp() {
+        fHRamp = Math.min(2.999, followSpeed.get());
+        fVRamp = Math.min(7.999, followVerticalSpeed.get());
+        fHDelay = 0;
+        fVDelay = 0;
+    }
+
+    private static double approach(double cur, double max) {
+        if (cur >= max) return max;
+        return cur + (max - cur) * 0.2;
+    }
+
+    private double maxDiveEff() {
+        return Math.max(maxDive.get(), minHeightAboveTarget.get());
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -1010,9 +1109,9 @@ public class MaceSmash extends Module {
         double y = mc.player.getY();
         double botOff = band.bot - y;
         double topOff = band.top - y;
-        if (topOff < top - maxDive.get()) return null;
+        if (topOff < top - maxDiveEff()) return null;
         if (botOff > top) return null;
-        double strike = Math.max(top - maxDive.get(), botOff + 0.05);
+        double strike = Math.max(top - maxDiveEff(), botOff + 0.05);
         if (strike > top - minDrop()) {
             if (top - minDrop() < botOff + 0.05) return null;
             strike = top - minDrop();
@@ -1041,6 +1140,7 @@ public class MaceSmash extends Module {
     }
 
     private void sendPosRaw(double y) {
+        if (limitMaxHeight.get()) y = Math.min(y, maxHeight.get());
         ServerboundMovePlayerPacket p = new ServerboundMovePlayerPacket.Pos(mc.player.getX(), y, mc.player.getZ(), false, mc.player.horizontalCollision);
         ((IServerboundMovePlayerPacket) p).meteor$setTag(TAG);
         mc.getConnection().getConnection().send(p);
@@ -1465,7 +1565,7 @@ public class MaceSmash extends Module {
 
     private boolean restValid(Band band, double realY, double base, double esc) {
         double d0 = restY - base;
-        return Math.abs(restY - realY) <= maxDive.get() + 1e-6
+        return Math.abs(restY - realY) <= maxDiveEff() + 1e-6
             && d0 <= band.top - 0.05
             && d0 >= band.top - 0.3 - 0.5
             && d0 - esc >= band.bot + 0.2
@@ -1475,12 +1575,12 @@ public class MaceSmash extends Module {
     private boolean planRest(Band band, double realY, double base, double esc) {
         double top = band.top - 0.3;
         double rest = top + base;
-        if (Math.abs(rest - realY) > maxDive.get()) {
+        if (Math.abs(rest - realY) > maxDiveEff()) {
             report(rest < realY ? String.format("too high: hover lower or raise max-dive (need %.0f)", realY - rest) : String.format("too low: hover higher or raise max-dive (need %.0f)", rest - realY));
             return false;
         }
         if (top - esc < band.bot + 0.2) { report("reach band too short for this ladder - lower escalate"); return false; }
-        double lim = Math.min(band.top + base - 0.05, realY + maxDive.get());
+        double lim = Math.min(band.top + base - 0.05, realY + maxDiveEff());
         for (double r = rest; r <= lim + 1e-9; r += 0.5) {
             if (columnFree(r - base - esc, r, 0.6)) {
                 restY = r;
@@ -1591,11 +1691,11 @@ public class MaceSmash extends Module {
         AABB b = leadBox(e);
         Band band = bandFor(b, EYE_GLIDING);
         if (band == null) { if (!quiet) status = "target too far sideways"; return null; }
-        if (realY - band.top > maxDive.get()) { if (!quiet) report(String.format("too high: hover lower or raise max-dive (need %.0f)", realY - band.top)); return null; }
+        if (realY - band.top > maxDiveEff()) { if (!quiet) report(String.format("too high: hover lower or raise max-dive (need %.0f)", realY - band.top)); return null; }
         double top = occamRiseTo.get() == OccamRise.RealPosition ? realY : Math.min(realY, band.top);
 
         double floor = Math.max(b.minY + occamClearance.get() - EYE_GLIDING, webFloorY(b));
-        double bot = Math.max(Math.max(band.bot + 0.2, floor), realY - maxDive.get());
+        double bot = Math.max(Math.max(band.bot + 0.2, floor), realY - maxDiveEff());
         if (Math.min(top, band.top) - bot < 1.0 + oStrikeDip(0) + 0.05) { if (!quiet) report("too low: hover higher / closer"); return null; }
         return new OPlan(top, bot, band, b);
     }
@@ -2123,7 +2223,7 @@ public class MaceSmash extends Module {
                 }
 
                 Plan p = plan(target, offset);
-                if (p == null) { report("can't reach (hover 2-" + (int) maxDive.get().doubleValue() + " blocks above them, within " + reach.get() + " sideways)"); return; }
+                if (p == null) { report("can't reach (hover 2-" + (int) maxDiveEff() + " blocks above them, within " + reach.get() + " sideways)"); return; }
                 phase = Phase.Descend;
                 cycleTop = offset;
                 strikeOffset = p.strikeOff;
