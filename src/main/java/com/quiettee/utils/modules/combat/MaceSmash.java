@@ -221,6 +221,72 @@ public class MaceSmash extends Module {
         .build()
     );
 
+    private final Setting<Double> followMinSpeed = sgTrack.add(new DoubleSetting.Builder()
+        .name("minimum-horizontal-speed")
+        .description("The speed you start at when moving horizontally, before acceleration kicks in")
+        .min(0)
+        .defaultValue(2.999)
+        .visible(follow::get)
+        .build()
+    );
+
+    private final Setting<Double> followMinVerticalSpeed = sgTrack.add(new DoubleSetting.Builder()
+        .name("minimum-vertical-speed")
+        .description("The speed you start at when moving vertically, before acceleration kicks in")
+        .min(0)
+        .defaultValue(7.999)
+        .visible(() -> follow.get() && followVertical.get() != VerticalFollow.Off)
+        .build()
+    );
+
+    private final Setting<Double> accelerationPlateau = sgTrack.add(new DoubleSetting.Builder()
+        .name("horizontal-acceleration-plateau")
+        .description("The horizontal speed where acceleration will tend to 0")
+        .min(0.01)
+        .defaultValue(14.999)
+        .visible(follow::get)
+        .build()
+    );
+
+    private final Setting<Double> verticalAccelerationPlateau = sgTrack.add(new DoubleSetting.Builder()
+        .name("vertical-acceleration-plateau")
+        .description("The vertical speed where acceleration will tend to 0")
+        .min(0.01)
+        .defaultValue(29.999)
+        .visible(() -> follow.get() && followVertical.get() != VerticalFollow.Off)
+        .build()
+    );
+
+    private final Setting<Integer> accelerationDelay = sgTrack.add(new IntSetting.Builder()
+        .name("acceleration-delay")
+        .description("Adds a slight delay before accelerating. 1 Tick is necessary to avoid getting stuck.")
+        .min(0)
+        .sliderMax(100)
+        .defaultValue(1)
+        .visible(follow::get)
+        .build()
+    );
+
+    private final Setting<Double> accelerationStep = sgTrack.add(new DoubleSetting.Builder()
+        .name("horizontal-acceleration-step")
+        .description("How fast horizontal speed ramps up")
+        .min(0.01)
+        .max(5)
+        .defaultValue(0.3)
+        .visible(follow::get)
+        .build()
+    );
+
+    private final Setting<Double> verticalAccelerationStep = sgTrack.add(new DoubleSetting.Builder()
+        .name("vertical-acceleration-step")
+        .description("How fast vertical speed ramps up")
+        .min(0.01)
+        .max(5)
+        .defaultValue(1.0)
+        .visible(() -> follow.get() && followVertical.get() != VerticalFollow.Off)
+        .build()
+    );
+
     private final Setting<Boolean> limitMaxHeight = sgTrack.add(new BoolSetting.Builder()
         .name("limit-max-height")
         .description("Stops you (and the ghost) from going above a set height.")
@@ -980,10 +1046,9 @@ public class MaceSmash extends Module {
         fVx = fVz = 0;
         boolean wantH = intersecting || excess > 1e-3;
         if (wantH && h > 1e-6) {
-            if (fHDelay < 1) fHDelay++;
-            else fHRamp = approach(fHRamp, followSpeed.get());
+            tickHorizontalRamp();
         } else {
-            fHRamp = Math.min(2.999, followSpeed.get());
+            fHRamp = Math.min(followMinSpeed.get(), followSpeed.get());
             fHDelay = 0;
         }
         if (intersecting && h > 1e-6) {
@@ -1007,8 +1072,7 @@ public class MaceSmash extends Module {
             if (intersecting) {
                 double tyE = target.getBoundingBox().maxY + (target.getY() - target.yOld) * lead + followHeight.get();
                 double dyE = tyE - py;
-                if (fVDelay < 1) fVDelay++;
-                else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                tickVerticalRamp();
                 if (Math.abs(dyE) > 0.5) fVy = Math.signum(dyE) * Math.min(Math.abs(dyE) - 0.5, fVRamp);
                 else fVy = Math.min(fVRamp, 1.0);
                 fVertical = true;
@@ -1025,8 +1089,7 @@ public class MaceSmash extends Module {
                         ty = Mth.clamp(ty, lo, hi);
                         double dy = ty - py, tol = 0.5;
                         if (Math.abs(dy) > tol) {
-                            if (fVDelay < 1) fVDelay++;
-                            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                            tickVerticalRamp();
                             fVy = Math.signum(dy) * Math.min(Math.abs(dy) - tol, fVRamp);
                             fMoving = true;
                             wantV = true;
@@ -1034,15 +1097,13 @@ public class MaceSmash extends Module {
                         fVertical = true;
                     } else {
                         if (py < lo) {
-                            if (fVDelay < 1) fVDelay++;
-                            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                            tickVerticalRamp();
                             fVy = Math.min(fVRamp, lo - py);
                             fVertical = true;
                             fMoving = true;
                             wantV = true;
                         } else if (py > hi) {
-                            if (fVDelay < 1) fVDelay++;
-                            else fVRamp = approach(fVRamp, followVerticalSpeed.get());
+                            tickVerticalRamp();
                             fVy = -Math.min(fVRamp, py - hi);
                             fVertical = true;
                             fMoving = true;
@@ -1052,7 +1113,7 @@ public class MaceSmash extends Module {
                 }
             }
         }
-        if (!wantV) { fVRamp = Math.min(7.999, followVerticalSpeed.get()); fVDelay = 0; }
+        if (!wantV) { fVRamp = Math.min(followMinVerticalSpeed.get(), followVerticalSpeed.get()); fVDelay = 0; }
 
         if (limitMaxHeight.get() && fVy > 0) {
             double lim = maxHeight.get();
@@ -1068,15 +1129,32 @@ public class MaceSmash extends Module {
     }
 
     private void resetFollowRamp() {
-        fHRamp = Math.min(2.999, followSpeed.get());
-        fVRamp = Math.min(7.999, followVerticalSpeed.get());
+        fHRamp = Math.min(followMinSpeed.get(), followSpeed.get());
+        fVRamp = Math.min(followMinVerticalSpeed.get(), followVerticalSpeed.get());
         fHDelay = 0;
         fVDelay = 0;
     }
 
-    private static double approach(double cur, double max) {
-        if (cur >= max) return max;
-        return cur + (max - cur) * 0.2;
+    private void tickHorizontalRamp() {
+        if (fHDelay < accelerationDelay.get()) {
+            if (fHDelay == 0) fHRamp = Math.min(followMinSpeed.get(), followSpeed.get());
+            fHDelay++;
+            return;
+        }
+        double plateau = accelerationPlateau.get();
+        double gain = accelerationStep.get() * Math.max(0, plateau - fHRamp) / plateau;
+        fHRamp = Math.min(fHRamp + gain, followSpeed.get());
+    }
+
+    private void tickVerticalRamp() {
+        if (fVDelay < accelerationDelay.get()) {
+            if (fVDelay == 0) fVRamp = Math.min(followMinVerticalSpeed.get(), followVerticalSpeed.get());
+            fVDelay++;
+            return;
+        }
+        double plateau = verticalAccelerationPlateau.get();
+        double gain = verticalAccelerationStep.get() * Math.max(0, plateau - fVRamp) / plateau;
+        fVRamp = Math.min(fVRamp + gain, followVerticalSpeed.get());
     }
 
     private double maxDiveEff() {
