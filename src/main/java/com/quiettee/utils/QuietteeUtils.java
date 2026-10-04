@@ -2,10 +2,12 @@ package com.quiettee.utils;
 
 import com.mojang.logging.LogUtils;
 import com.quiettee.utils.modules.combat.BoatShot;
+import com.quiettee.utils.modules.combat.ElytraShot;
 import com.quiettee.utils.modules.combat.Fusillade;
 import com.quiettee.utils.modules.combat.Lance;
 import com.quiettee.utils.modules.combat.MaceSmash;
 import com.quiettee.utils.modules.movement.BoatPhase;
+import com.quiettee.utils.modules.movement.ElytraPhase;
 import com.quiettee.utils.modules.movement.FloatModule;
 import com.quiettee.utils.modules.movement.GliderWalk;
 import com.quiettee.utils.modules.movement.elytramotion.ElytraDive;
@@ -39,6 +41,7 @@ public class QuietteeUtils extends MeteorAddon {
         modules.add(new Lance());
         modules.add(new Fusillade());
         modules.add(new BoatShot());
+        modules.add(new ElytraShot());
         modules.add(new AirMiner());
         modules.add(new FloatModule());
         modules.add(new GliderWalk());
@@ -46,6 +49,7 @@ public class QuietteeUtils extends MeteorAddon {
         modules.add(new ElytraOrbit());
         modules.add(new ElytraDive());
         modules.add(new BoatPhase());
+        modules.add(new ElytraPhase());
         modules.add(new Flicker());
         modules.add(new HighContrast());
     }

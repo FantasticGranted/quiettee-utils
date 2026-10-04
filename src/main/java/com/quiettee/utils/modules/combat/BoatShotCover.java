@@ -22,7 +22,8 @@ public final class BoatShotCover {
         return new Point(delta.x*scale,delta.y*scale,delta.z*scale);
     }
     public static Route find(Point from,Point targetTop,double ceiling,
-                             Predicate<Point> firing,BiPredicate<Point,Point> travel) {
+                             Predicate<Point> firing,BiPredicate<Point,Point> travel,
+                             int maxTests,long deadlineNanos) {
         if(!Double.isFinite(from.x+from.y+from.z+targetTop.x+targetTop.y+targetTop.z+ceiling))return null;
         if(firing.test(from))return new Route(List.of(from));
         List<Point> candidates=new ArrayList<>();
@@ -36,8 +37,12 @@ public final class BoatShotCover {
         }
         candidates.sort(Comparator.comparingDouble(from::distance));
         Route best=null;double shortest=Double.POSITIVE_INFINITY;
+        int attempts=1;
         for(Point p:candidates) {
-            if(from.distance(p)>96 || from.distance(p)>=shortest || !firing.test(p))continue;
+            if(from.distance(p)>96 || from.distance(p)>=shortest)continue;
+            if(attempts>=maxTests || System.nanoTime()>deadlineNanos)break;
+            attempts++;
+            if(!firing.test(p))continue;
             for(Route route:List.of(new Route(List.of(p)),
                 new Route(List.of(new Point(p.x,from.y,p.z),p)),
                 new Route(List.of(new Point(from.x,p.y,from.z),p)))) {

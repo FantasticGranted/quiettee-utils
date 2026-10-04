@@ -19,20 +19,24 @@ public final class BoatShotAim {
 
     public static Solution solveDiscrete(double x,double y,double z,double vx,double vy,double vz,
                                          double speed,double burst,double minimumPitch) {
-        if(!Double.isFinite(x+y+z+vx+vy+vz+speed+burst+minimumPitch)||speed<.1)return null;
+        return solveDiscrete(x,y,z,vx,vy,vz,speed,burst,0,0,minimumPitch);
+    }
+    public static Solution solveDiscrete(double x,double y,double z,double vx,double vy,double vz,
+                                         double speed,double burst,double sx,double sz,double minimumPitch) {
+        if(!Double.isFinite(x+y+z+vx+vy+vz+speed+burst+sx+sz+minimumPitch)||speed<.1)return null;
         for(int tick=0;tick<80;tick++) {
             double tx=x+vx*(tick+1),ty=y+vy*(tick+1),tz=z+vz*(tick+1);
-            double low=tick+1e-5,high=tick+1,lo=error(low,tx,ty,tz,0,0,0,speed,burst);
-            double hi=error(high,tx,ty,tz,0,0,0,speed,burst);
+            double low=tick+1e-5,high=tick+1,lo=error(low,tx,ty,tz,0,0,0,speed,burst,sx,sz);
+            double hi=error(high,tx,ty,tz,0,0,0,speed,burst,sx,sz);
             if(Math.signum(lo)==Math.signum(hi))continue;
             for(int j=0;j<40;j++) {
-                double mid=(low+high)/2,e=error(mid,tx,ty,tz,0,0,0,speed,burst);
+                double mid=(low+high)/2,e=error(mid,tx,ty,tz,0,0,0,speed,burst,sx,sz);
                 if(Math.signum(e)==Math.signum(lo)){low=mid;lo=e;}else high=mid;
             }
             double time=(low+high)/2,a=distanceFactor(time);
-            double dx=tx/a,dz=tz/a,dy=(ty+gravityDrop(time))/a-burst;
+            double dx=tx/a-sx,dz=tz/a-sz,dy=(ty+gravityDrop(time))/a-burst;
             float pitch=(float)-Math.toDegrees(Math.atan2(dy,Math.hypot(dx,dz)));
-            if(Math.abs(pitch)>=minimumPitch && pitch*burst<0)
+            if(Math.abs(pitch)>=minimumPitch && (sx!=0||sz!=0||pitch*burst<0))
                 return new Solution((float)Math.toDegrees(Math.atan2(-dx,dz)),pitch,time);
         }
         return null;
@@ -40,15 +44,15 @@ public final class BoatShotAim {
     public static Solution solve(double x, double y, double z, double vx, double vy, double vz,
                                  double speed, double burst, double minimumPitch) {
         if (!Double.isFinite(x + y + z + vx + vy + vz + speed + burst + minimumPitch) || speed < 0.1) return null;
-        double previousT = 0.025, previous = error(previousT, x, y, z, vx, vy, vz, speed, burst);
+        double previousT = 0.025, previous = error(previousT, x, y, z, vx, vy, vz, speed, burst, 0, 0);
         for (int i = 1; i <= 800; i++) {
             double t = i * 0.1;
-            double value = error(t, x, y, z, vx, vy, vz, speed, burst);
+            double value = error(t, x, y, z, vx, vy, vz, speed, burst, 0, 0);
             if (Math.signum(value) != Math.signum(previous)) {
                 double low = previousT, high = t, lowValue = previous;
                 for (int j = 0; j < 40; j++) {
                     double mid = (low + high) / 2;
-                    double e = error(mid, x, y, z, vx, vy, vz, speed, burst);
+                    double e = error(mid, x, y, z, vx, vy, vz, speed, burst, 0, 0);
                     if (Math.signum(e) == Math.signum(lowValue)) { low = mid; lowValue = e; } else high = mid;
                 }
                 double time = (low + high) / 2, a = distanceFactor(time);
@@ -63,8 +67,8 @@ public final class BoatShotAim {
         }
         return null;
     }
-    private static double error(double t, double x, double y, double z, double vx, double vy, double vz, double speed, double burst) {
-        double a = distanceFactor(t), dx = (x + vx * t) / a, dz = (z + vz * t) / a;
+    private static double error(double t, double x, double y, double z, double vx, double vy, double vz, double speed, double burst, double sx, double sz) {
+        double a = distanceFactor(t), dx = (x + vx * t) / a - sx, dz = (z + vz * t) / a - sz;
         double dy = (y + vy * t + gravityDrop(t)) / a - burst;
         return dx * dx + dy * dy + dz * dz - speed * speed;
     }

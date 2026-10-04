@@ -251,7 +251,17 @@ public final class BoatShot extends Module {
     private boolean coverMode;
     private BoatShotCover.Route coverRoute;
     private int coverIndex, nextCoverSearch;
+    private Vec3 coverSearchBoat, coverSearchTarget;
+    private int lastGuardRefresh = -100;
+    private LivingEntity guardTarget;
+    private boolean guardProtect;
+    private boolean logDirty;
+    private Aim aimCache;
+    private AimCacheKey aimCacheKey;
+    private boolean aimCacheValid;
+    private int aimCacheTick = -100;
     private record Aim(double delta, float yaw, float pitch) {}
+    private record AimCacheKey(double mx, double my, double mz, double burst, double speed, AABB box, Vec3 tvel, double lead) {}
 
     public BoatShot() {
         super(QuietteeUtils.CATEGORY, "boat-shot", "Fire a bow during a vertical boat burst.");
@@ -412,14 +422,21 @@ public final class BoatShot extends Module {
             record("SEAT boat=%s primed=%b", boat == null ? "none" : boat.getId(), mount.ready());
         }
         observeArrows();
-        feedback.tick(world, playerId, tick, message -> { if (hitInfo.get()) info("%s", message); }, message -> record("%s", message));
-        if (!driving()) { abort("not driving", true); status = "board the driver's seat"; restoreConflicts(); return; }
+        long perfStart = System.nanoTime(), perfA = 0, perfB = 0, perfC = 0, perfD = 0;
+        long perfT = System.nanoTime();
+        feedback.tick(world, playerId, tick, () -> target, message -> { if (hitInfo.get()) info("%s", message); }, message -> record("%s", message));
+        perfA = System.nanoTime() - perfT;
+        if (!driving()) { abort("not driving", true); status = "board the driver's seat"; restoreConflicts(); flushLog(); return; }
         updateTarget();
         predictedLead = adaptivePrediction.get() || automaticLead.get() ? prediction.updateLead(PlayerUtils.getPing(),serverTps(),prediction.sampleAge(tick)) : extraLead.get();
         crystalsProtected = protectCrystals();
-        guard.refresh(world,player,boat,target,crystalsProtected);
+        perfT = System.nanoTime();
+        if (tick - lastGuardRefresh >= 3 || target != guardTarget || crystalsProtected != guardProtect) refreshGuard();
+        perfB = System.nanoTime() - perfT;
         checkCeiling();
+        perfT = System.nanoTime();
         updateCover();
+        perfC = System.nanoTime() - perfT;
         pauseConflicts();
         if (cycle.stage() != BoatShotCycle.Stage.IDLE && (phase == null || !phase.shotReady(boat))) abort("Boat Phase paused", true);
         if (pending != null && (!sameBow() || cycle.expired(tick) || mc.screen != null
@@ -436,12 +453,18 @@ public final class BoatShot extends Module {
         web.configure(quickCapture.get(),autoCombat.get()?4:12);
         web.pattern(webPattern.get());
         web.shootingFallback(shootAfterCaptureMiss.get());
+        perfT = System.nanoTime();
         web.tick(tick,boat,target,targetPosition,targetVelocity,predictedLead+leadAdjustment.get(),webCube.get() && webEligible() && !coverMode,capturePause,webAirPlace.get(),phase,
             this::cancelDraw,message -> record("%s",message));
+        perfD = System.nanoTime() - perfT;
         if(web.busy()) status=web.status();
         else automaticDraw();
         if(Double.isFinite(escapeY) && !status.startsWith("disengaged:"))status="disengaging: descending from height limit";
         if(!status.equals(lastFlow)) {record("FLOW tick=%d state=%s",tick,status);lastFlow=status;}
+        long perfTotal = System.nanoTime() - perfStart;
+        if (perfTotal > 16_000_000L) record("PERF tick=%d feedback=%.2fms guard=%.2fms cover=%.2fms web=%.2fms total=%.2fms",
+            tick, perfA / 1e6, perfB / 1e6, perfC / 1e6, perfD / 1e6, perfTotal / 1e6);
+        flushLog();
     }
 
     private boolean manualMovement() {
@@ -768,14 +791,14 @@ public final class BoatShot extends Module {
         text.render(label,x,y,new Color(255,220,110),true);text.end();
     }
 
-    private void resetCover() {coverMode=false;coverRoute=null;coverIndex=0;nextCoverSearch=0;}
+    private void resetCover() {coverMode=false;coverRoute=null;coverIndex=0;nextCoverSearch=0;coverSearchBoat=null;coverSearchTarget=null;}
     private static BoatShotCover.Point point(Vec3 v) {return new BoatShotCover.Point(v.x,v.y,v.z);}
     private static Vec3 vector(BoatShotCover.Point p) {return new Vec3(p.x(),p.y(),p.z());}
     private void updateCover() {
         if(!seekCoverAngle.get() || !follows() || !aimEnabled() || !validTarget(target) || phase==null) {resetCover();return;}
         if(manualMovement() || mc.screen!=null || pending!=null || cycle.stage()!=BoatShotCycle.Stage.IDLE
             || !phase.shotReady(boat) || !(player.getMainHandItem().getItem() instanceof BowItem) || tick<nextCoverSearch)return;
-        nextCoverSearch=tick+20;
+        nextCoverSearch=tick+40;
         AABB body=observedTargetBox();
         Vec3 overhead=new Vec3(body.getCenter().x,Math.min(phase.captureCeiling(boat),body.maxY+Math.max(followHeight.get(),shotBurst()+6)),body.getCenter().z);
         boolean covered=world.clipIncludingBorder(new ClipContext(overhead,body.getCenter(),ClipContext.Block.COLLIDER,
@@ -784,10 +807,14 @@ public final class BoatShot extends Module {
         coverMode=true;
 
         if(web.busy())return;
+        if(coverSearchBoat!=null && boat.position().distanceToSqr(coverSearchBoat)<=16
+            && body.getCenter().distanceToSqr(coverSearchTarget)<=16)return;
+        coverSearchBoat=boat.position();
+        coverSearchTarget=body.getCenter();
         String previousFailure=aimFailure,previousObstruction=obstruction;
         try {
             coverRoute=BoatShotCover.find(point(boat.position()),new BoatShotCover.Point(body.getCenter().x,body.maxY,body.getCenter().z),
-                phase.captureCeiling(boat),this::coverFiringStation,(a,b)->coverTravel(vector(a),vector(b)));
+                phase.captureCeiling(boat),this::coverFiringStation,(a,b)->coverTravel(vector(a),vector(b)),12,System.nanoTime()+30_000_000L);
             coverIndex=0;
             record("COVER tick=%d route=%s gliding=%b",tick,coverRoute==null?"none":coverRoute.points(),target.isFallFlying());
         } finally {aimFailure=previousFailure;obstruction=previousObstruction;}
@@ -797,7 +824,7 @@ public final class BoatShot extends Module {
         if(eye.y<=observedTargetBox().maxY+2)return false;
         double burst=-BoatShotAutomation.downwardBurst(Math.min(2,shotBurst()),eye.y,observedTargetBox().maxY);
         if(!coverTravel(station,station.add(0,burst,0)))return false;
-        Aim aim=aimedShot(BoatShotDamage.clientTicks(20,serverTps()),eye.add(0,burst-.1,0),burst);
+        Aim aim=aimProbe(BoatShotDamage.clientTicks(20,serverTps()),eye.add(0,burst-.1,0),burst);
         if(aim==null)return false;
         Vec3 direction=Vec3.directionFromRotation(aim.yaw(),aim.pitch());
         for(Vec3 start:new Vec3[]{eye.add(0,-.1,0),eye.add(0,burst-.1,0)})
@@ -922,11 +949,24 @@ public final class BoatShot extends Module {
 
     private Aim aimedShot(int age,Vec3 muzzle,double burst) {
         age=bowTicks(age);
+        AimCacheKey key = new AimCacheKey(Math.rint(muzzle.x*16)/16, Math.rint(muzzle.y*16)/16, Math.rint(muzzle.z*16)/16,
+            burst, BoatShotAim.bowSpeed(age), observedTargetBox(), targetVelocity, aimLead());
+        if (aimCacheValid && tick - aimCacheTick <= 2 && key.equals(aimCacheKey)) return aimCache;
+        Aim result = solveAim(age, muzzle, burst, new double[] {.5,.65,.35});
+        aimCache = result; aimCacheKey = key; aimCacheValid = true; aimCacheTick = tick;
+        return result;
+    }
+
+    private Aim aimProbe(int age,Vec3 muzzle,double burst) {
+        return solveAim(bowTicks(age), muzzle, burst, new double[] {.5});
+    }
+
+    private Aim solveAim(int age,Vec3 muzzle,double burst,double[] fractions) {
         AABB box = observedTargetBox();
         boolean solved = false;
         obstruction = "";
 
-        for (double fraction : new double[] {.5,.65,.35}) {
+        for (double fraction : fractions) {
             Vec3 point = new Vec3((box.minX+box.maxX)/2, box.minY+(box.maxY-box.minY)*fraction,(box.minZ+box.maxZ)/2);
             Vec3 offset = point.add(targetVelocity.scale(aimLead())).subtract(muzzle);
             BoatShotAim.Solution solution = BoatShotAim.solveDiscrete(offset.x,offset.y,offset.z,targetVelocity.x,targetVelocity.y,targetVelocity.z,
@@ -1019,7 +1059,7 @@ public final class BoatShot extends Module {
         boolean crystals = protectCrystals();
         if (crystals != crystalsProtected) {
             crystalsProtected=crystals;
-            guard.refresh(world,player,boat,target,crystals);
+            refreshGuard();
         }
         if (!guard.clear(world,candidate,step,crystals)) {
             travelBlockReason=crystals?"crystal or web danger":"web or hazardous block";
@@ -1051,6 +1091,11 @@ public final class BoatShot extends Module {
             || inventoryFollowAllowed()
             || player.isUsingItem() && player.getActiveItem().getItem() instanceof BowItem
             || follows() && validTarget(target) && player.getMainHandItem().getItem() instanceof BowItem;
+    }
+
+    private void refreshGuard() {
+        guard.refresh(world,player,boat,target,crystalsProtected);
+        lastGuardRefresh=tick;guardTarget=target;guardProtect=crystalsProtected;
     }
 
     @Override public WWidget getWidget(GuiTheme theme) {
@@ -1120,6 +1165,7 @@ public final class BoatShot extends Module {
         escapeY=Double.NaN;escapeAway=Vec3.ZERO;lastFlow="";chargeRequired=0;
         feedback.reset();
         web.reset(); guard.reset(); navigator.reset(); resetCover();
+        lastGuardRefresh=-100;guardTarget=null;aimCacheValid=false;aimCacheTick=-100;logDirty=false;
         prediction.reset(); predictedLead=2; crystalsProtected=false;
         drawLock.reset();
         target = null;
@@ -1160,11 +1206,16 @@ public final class BoatShot extends Module {
             log = new PrintWriter(Files.newBufferedWriter(directory.resolve("shot-" + time + ".log"), StandardCharsets.UTF_8));
             record("START BoatShot v16; adaptive flight net, inventory following and water ascent");
             for (SettingGroup group : settings) for (Setting<?> setting : group) record("cfg %s = %s", setting.name, setting.get());
+            flushLog();
         } catch (IOException e) { warning("Could not open Boat Shot log: %s", e.getMessage()); }
     }
 
     private void record(String format, Object... args) {
-        if (log != null) { log.printf(Locale.ROOT, format + "%n", args); log.flush(); }
+        if (log != null) { log.printf(Locale.ROOT, format + "%n", args); logDirty = true; }
+    }
+
+    private void flushLog() {
+        if (logDirty && log != null) { log.flush(); logDirty = false; }
     }
 
     @Override public String getInfoString() {

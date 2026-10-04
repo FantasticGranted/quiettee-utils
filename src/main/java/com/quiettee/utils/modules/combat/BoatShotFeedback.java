@@ -3,6 +3,7 @@ package com.quiettee.utils.modules.combat;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundDamageEventPacket;
@@ -13,6 +14,7 @@ import net.minecraft.world.phys.AABB;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class BoatShotFeedback {
     private final ConcurrentLinkedQueue<Packet<?>> incoming = new ConcurrentLinkedQueue<>();
@@ -39,7 +41,7 @@ public final class BoatShotFeedback {
         for (long key : seen.keySet()) if ((int)(key >> 32) == arrow) return true;
         return false;
     }
-    public void tick(ClientLevel world, int player, int tick, Consumer<String> report, Consumer<String> log) {
+    public void tick(ClientLevel world, int player, int tick, Supplier<LivingEntity> target, Consumer<String> report, Consumer<String> log) {
         Packet<?> packet;
         while ((packet = incoming.poll()) != null) {
             if (packet instanceof ClientboundDamageEventPacket damage) {
@@ -95,8 +97,12 @@ public final class BoatShotFeedback {
         otherDamage.entrySet().removeIf(e -> tick - e.getValue() > 10);
         recentTotem.entrySet().removeIf(e -> tick-e.getValue()>10);
         health.clear(); absorption.clear();
-        for (Entity entity : world.getEntities((Entity)null, new AABB(-30000000, -30000000, -30000000, 30000000, 30000000, 30000000), e -> true)) if (entity instanceof LivingEntity living) {
-            health.put(entity.getId(), living.getHealth()); absorption.put(entity.getId(),living.getAbsorptionAmount());
+        for (Player entity : world.players()) {
+            health.put(entity.getId(), entity.getHealth()); absorption.put(entity.getId(),entity.getAbsorptionAmount());
+        }
+        LivingEntity primary = target.get();
+        if (primary != null && primary.isAlive() && !(primary instanceof Player)) {
+            health.put(primary.getId(), primary.getHealth()); absorption.put(primary.getId(),primary.getAbsorptionAmount());
         }
     }
 }
