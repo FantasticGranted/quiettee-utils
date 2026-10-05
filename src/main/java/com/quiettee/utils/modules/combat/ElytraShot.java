@@ -1,11 +1,13 @@
 package com.quiettee.utils.modules.combat;
 
 import com.quiettee.utils.QuietteeUtils;
+import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.mixininterface.IVec3;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
@@ -25,6 +27,7 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.*;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -55,6 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class ElytraShot extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAim = settings.createGroup("Target Lock");
+    private final SettingGroup sgFlight = settings.createGroup("Flight");
 
     private final Setting<Boolean> autoFire = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-fire").description("Draw and fire automatically at the locked target.")
@@ -124,6 +128,28 @@ public final class ElytraShot extends Module {
         .name("target-fill").description("Target fill opacity.")
         .defaultValue(55).range(0,180).sliderRange(0,120).visible(showTarget::get).build());
 
+    private final Setting<Boolean> perch = sgFlight.add(new BoolSetting.Builder()
+        .name("perch").description("Hold your altitude above the locked target while gliding.")
+        .defaultValue(true).build());
+    private final Setting<Double> hoverHeight = sgFlight.add(new DoubleSetting.Builder()
+        .name("hover-height").description("Height above the target to hold.")
+        .defaultValue(20).min(5).max(30).sliderRange(8, 28).visible(perch::get).build());
+    private final Setting<Double> followVerticalSpeed = sgFlight.add(new DoubleSetting.Builder()
+        .name("follow-vertical-speed").description("Max vertical chase speed in blocks per tick.")
+        .defaultValue(14.999).min(0.1).max(14.999).sliderRange(0.5, 14.999).visible(perch::get).build());
+    private final Setting<Double> followMinVerticalSpeed = sgFlight.add(new DoubleSetting.Builder()
+        .name("minimum-vertical-speed").description("Vertical speed before acceleration kicks in.")
+        .defaultValue(7.999).min(0).max(14.999).sliderRange(0, 14.999).visible(perch::get).build());
+    private final Setting<Integer> accelerationDelay = sgFlight.add(new IntSetting.Builder()
+        .name("acceleration-delay").description("Ticks before vertical acceleration kicks in.")
+        .defaultValue(1).min(0).sliderMax(100).visible(perch::get).build());
+    private final Setting<Double> verticalAccelerationPlateau = sgFlight.add(new DoubleSetting.Builder()
+        .name("vertical-acceleration-plateau").description("Vertical speed where acceleration tends to zero.")
+        .defaultValue(14.999).min(0.01).max(14.999).sliderRange(0.5, 14.999).visible(perch::get).build());
+    private final Setting<Double> verticalAccelerationStep = sgFlight.add(new DoubleSetting.Builder()
+        .name("vertical-acceleration-step").description("How fast vertical speed ramps up.")
+        .defaultValue(1.0).min(0.01).max(5).sliderRange(0.01, 3).visible(perch::get).build());
+
     private static final String[] CONFLICTS = { "boat-shot", "lance", "fusillade", "bow-spam", "bow-aimbot", "quiver", "shot-boost" };
     private final List<Module> paused = new ArrayList<>();
     private final BoatShotFeedback feedback = new BoatShotFeedback();
@@ -144,6 +170,8 @@ public final class ElytraShot extends Module {
     private Vec3 targetPosition, targetVelocity = Vec3.ZERO;
     private double predictedLead = 2;
     private boolean crystalsProtected, guardProtect;
+    private double perchVy, appliedPerchVy, perchRamp;
+    private int perchDelay;
     private boolean sendingRelease, suppressRelease, automaticReleasing, ownedAutoDraw, suppressAcquire;
     private String status = "waiting for session";
     private String aimFailure = "", obstruction = "";
@@ -158,13 +186,13 @@ public final class ElytraShot extends Module {
     private record AimCacheKey(double mx, double my, double mz, Vec3 flight, double speed, AABB box, Vec3 tvel, double lead) {}
 
     public ElytraShot() {
-        super(QuietteeUtils.CATEGORY, "elytra-shot", "Fire a bow while gliding; shots inherit your flight velocity.");
+        super(QuietteeUtils.CATEGORY, "elytra-shot", "Fire a bow while gliding; shots inherit your flight velocity and you perch above your lock.");
     }
 
     @Override public void onActivate() {
         resetSession();
         pauseConflicts();
-        info("Shots inherit your flight velocity. Lock with the lock key or draw once; camera stays free.");
+        info("Shots inherit your flight velocity. Lock with the lock key or draw once; camera stays free. Hover holds you above the lock.");
     }
 
     @Override public void onDeactivate() {
@@ -206,6 +234,7 @@ public final class ElytraShot extends Module {
             message -> record("%s", message));
         if (!player.isAlive()) { status = "waiting"; flushLog(); return; }
         updateTarget();
+        updatePerch();
         predictedLead = adaptivePrediction.get() || automaticLead.get()
             ? prediction.updateLead(PlayerUtils.getPing(), serverTps(), prediction.sampleAge(tick)) : extraLead.get();
         crystalsProtected = protectCrystals();
@@ -246,6 +275,53 @@ public final class ElytraShot extends Module {
         targetPosition = null;
         targetVelocity = Vec3.ZERO;
         prediction.resetMotion();
+    }
+
+    private void updatePerch() {
+        if (!perchActive()) {
+            resetPerchRamp();
+            perchVy = 0;
+            return;
+        }
+        double dy = observedPosition(target).y + hoverHeight.get() - player.getY();
+        if (Math.abs(dy) <= 1.0) {
+            resetPerchRamp();
+            perchVy = 0;
+            return;
+        }
+        tickPerchRamp();
+        perchVy = Mth.clamp(dy, -perchRamp, perchRamp);
+    }
+
+    private boolean perchActive() {
+        return perch.get() && sameSession() && player.isAlive() && target != null && validTarget(target)
+            && player.isFallFlying() && !player.getAbilities().flying;
+    }
+
+    private void resetPerchRamp() {
+        perchRamp = Math.min(followMinVerticalSpeed.get(), followVerticalSpeed.get());
+        perchDelay = 0;
+    }
+
+    private void tickPerchRamp() {
+        if (perchDelay < accelerationDelay.get()) {
+            if (perchDelay == 0) perchRamp = Math.min(followMinVerticalSpeed.get(), followVerticalSpeed.get());
+            perchDelay++;
+            return;
+        }
+        double plateau = verticalAccelerationPlateau.get();
+        double gain = verticalAccelerationStep.get() * Math.max(0, plateau - perchRamp) / plateau;
+        perchRamp = Math.min(perchRamp + gain, followVerticalSpeed.get());
+    }
+
+    private Vec3 plannedFlight() {
+        Vec3 flight = player.getDeltaMovement();
+        return perchVy == 0 ? flight : new Vec3(flight.x, perchVy, flight.z);
+    }
+
+    private Vec3 inheritedFlight() {
+        Vec3 flight = player.getDeltaMovement();
+        return appliedPerchVy == 0 ? flight : new Vec3(flight.x, appliedPerchVy, flight.z);
     }
 
     private void acquiredTarget() {
@@ -301,7 +377,7 @@ public final class ElytraShot extends Module {
             return;
         }
         if (!clearMuzzle(aim.yaw(), aim.pitch())) { status = "muzzle blocked"; return; }
-        if (crystalGuard.get() && !guard.clear(world, player, flight, crystalsProtected)) { status = "crystal or hazard danger"; return; }
+        if (crystalGuard.get() && !guard.clear(world, player, plannedFlight(), crystalsProtected)) { status = "crystal or hazard danger"; return; }
         nextAutoTick = tick + 1;
         record("AUTO-RELEASE tick=%d draw=%d required=%d health=%.2f flight=%s yaw=%.2f pitch=%.2f",
             tick, player.getUseItemRemainingTicks(), required, target.getHealth(), flight, aim.yaw(), aim.pitch());
@@ -312,7 +388,7 @@ public final class ElytraShot extends Module {
 
     private Aim aimedShot(int age) {
         age = bowTicks(age);
-        Vec3 flight = player.getDeltaMovement();
+        Vec3 flight = inheritedFlight();
         AABB box = observedTargetBox();
         Vec3 muzzle = player.getEyePosition();
         AimCacheKey key = new AimCacheKey(Math.rint(muzzle.x * 16) / 16, Math.rint(muzzle.y * 16) / 16,
@@ -385,7 +461,7 @@ public final class ElytraShot extends Module {
             return;
         }
         event.cancel();
-        Vec3 flight = player.getDeltaMovement();
+        Vec3 flight = inheritedFlight();
         record("AIM tick=%d target=%d name=%s yaw=%.2f pitch=%.2f flight=%s lead=%.2f draw=%d",
             tick, target.getId(), target.getName().getString(), aim.yaw(), aim.pitch(), flight, predictedLead, age);
         sendingRelease = true;
@@ -420,6 +496,16 @@ public final class ElytraShot extends Module {
             spawns.offer(spawn);
         }
         if (event.packet instanceof ClientboundPlayerPositionPacket) corrected.set(true);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    private void onPlayerMove(PlayerMoveEvent event) {
+        if (perchVy != 0 && sameSession() && player.isFallFlying() && !player.getAbilities().flying) {
+            ((IVec3) event.movement).meteor$set(event.movement.x, perchVy, event.movement.z);
+            appliedPerchVy = perchVy;
+        } else {
+            appliedPerchVy = 0;
+        }
     }
 
     private void observeArrows() {
@@ -631,6 +717,9 @@ public final class ElytraShot extends Module {
         guardProtect = false;
         lastGuardRefresh = -100;
         guardTarget = null;
+        perchVy = 0;
+        appliedPerchVy = 0;
+        resetPerchRamp();
         aimCacheValid = false;
         aimCacheTick = -100;
         logDirty = false;
