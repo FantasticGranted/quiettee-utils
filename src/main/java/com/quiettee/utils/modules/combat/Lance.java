@@ -159,6 +159,13 @@ public class Lance extends Module {
         .build()
     );
 
+    private final Setting<Boolean> targetLead = sgGeneral.add(new BoolSetting.Builder()
+        .name("target-lead")
+        .description("Predict the victim's motion so strikes land on moving targets.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> limitMaxHeight = sgGeneral.add(new BoolSetting.Builder()
         .name("limit-max-height")
         .description("Stops you from flying above a set height.")
@@ -1153,7 +1160,7 @@ public class Lance extends Module {
         else { ox = oy = oz = 0; wireSyncWanted = true; dbg("skip handoff-sync"); return; }
 
         double lead = couchTiming.predictionTicks(PlayerUtils.getPing());
-        AABB b = target.getBoundingBox().move(vPos.subtract(target.position())).move(vVel.scale(lead));
+        AABB b = target.getBoundingBox().move(vPos.subtract(target.position())).move(strikeVel().scale(lead));
         double cx = (b.minX + b.maxX) * 0.5, cz = (b.minZ + b.maxZ) * 0.5, head = b.maxY;
         AttackRange ar = weavingTier != null ? weavingRange : mc.player.getAttackRangeWith(mc.player.getMainHandItem());
         double effMax = ar != null ? ar.effectiveMaxRange(mc.player) : 4.5;
@@ -1178,7 +1185,7 @@ public class Lance extends Module {
         approachPriority.observe(tickCounter, couchGeneration, target.getId(), couched, wasStrike);
         double dxz = Math.sqrt((cur.x - cx) * (cur.x - cx) + (cur.z - cz) * (cur.z - cz));
 
-        boolean atLaunch = LanceAttackMath.readyToStrike(lane, attackPoint(cur), attackPoint(vVel), dip.get(), MAX_H,
+        boolean atLaunch = LanceAttackMath.readyToStrike(lane, attackPoint(cur), attackPoint(strikeVel()), dip.get(), MAX_H,
             lane.horizontal() ? MAX_V : dip.get() + 0.05);
         webbedNow = victimWebbed(target);
         boolean covered = currentWebCoverage();
@@ -1292,13 +1299,13 @@ public class Lance extends Module {
             status = String.format("LANCE %s · %s · off %.1f%s", EntityUtils.getName(target), hold, next.distanceTo(real), webbedNow ? " · webbed" : "");
         }
 
-        boolean nextAtLaunch = LanceAttackMath.readyToStrike(lane, attackPoint(next), attackPoint(vVel), dip.get(), MAX_H,
+        boolean nextAtLaunch = LanceAttackMath.readyToStrike(lane, attackPoint(next), attackPoint(strikeVel()), dip.get(), MAX_H,
             lane.horizontal() ? MAX_V : dip.get() + 0.05);
         boolean runnerVolley = !strike && !wasStrike && weavingTier == null && canWeb && needsWeb && threat == null
             && LanceWebTiming.canStart(tickCounter, lastWebVolleyTick, period.get(), couched)
             && (!couched || capture || !atLaunch && !nextAtLaunch) && tickCounter - lastWebVolleyTick >= period.get();
         if (runnerVolley && couched && remaining == 0) {
-            boolean imminent = LanceApproachPriority.imminent(lane, attackPoint(next), attackPoint(vVel), dip.get(), MAX_H,
+            boolean imminent = LanceApproachPriority.imminent(lane, attackPoint(next), attackPoint(strikeVel()), dip.get(), MAX_H,
                 lane.horizontal() ? MAX_V : dip.get() + 0.05,
                 delta -> attackPoint(approachMove(vec(delta), MAX_H, 1.2)),
                 (fromPoint, toPoint) -> {
@@ -1338,11 +1345,17 @@ public class Lance extends Module {
     private static Vec3 vec(LanceAttackMath.Point p) { return new Vec3(p.x(), p.y(), p.z()); }
     private static LanceAttackMath.Point attackPoint(Vec3 p) { return new LanceAttackMath.Point(p.x, p.y, p.z); }
 
+    private Vec3 strikeVel() {
+        if (!targetLead.get()) return vVel;
+        if (histLen >= 2) return hist[(histIdx - 1) & 7].subtract(hist[(histIdx - 2) & 7]);
+        return Vec3.ZERO;
+    }
+
     private boolean kineticDamageReady(Vec3 movement, Vec3 axis) {
         KineticWeapon kinetic = mc.player.getMainHandItem().get(DataComponents.KINETIC_WEAPON);
         if (kinetic == null || kinetic.damageConditions().isEmpty()) return false;
         double forward = movement.dot(axis) * 20;
-        double relative = Math.max(0, movement.subtract(vVel).dot(axis) * 20);
+        double relative = Math.max(0, movement.subtract(strikeVel()).dot(axis) * 20);
         return kinetic.damageConditions().get().test(Math.max(0, srvCouch - kinetic.delayTicks()), forward, relative, 1.0);
     }
 

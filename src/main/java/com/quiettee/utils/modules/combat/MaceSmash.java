@@ -139,6 +139,13 @@ public class MaceSmash extends Module {
         .build()
     );
 
+    private final Setting<Boolean> targetLead = sgGeneral.add(new BoolSetting.Builder()
+        .name("target-lead")
+        .description("Predict where the victim will be when the strike lands.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> lockTarget = sgTrack.add(new BoolSetting.Builder()
         .name("lock-target")
         .description("Stay on a victim until it dies or leaves.")
@@ -987,7 +994,7 @@ public class MaceSmash extends Module {
     private record Band(double bot, double top) {}
 
     private Band band(Entity e, double eye) {
-        return bandFor(e.getBoundingBox(), eye);
+        return bandFor(targetLead.get() ? leadBox(e) : e.getBoundingBox(), eye);
     }
 
     private Band bandFor(AABB b, double eye) {
@@ -1005,7 +1012,7 @@ public class MaceSmash extends Module {
     }
 
     private double[] window(Entity e) {
-        AABB b = e.getBoundingBox();
+        AABB b = targetLead.get() ? leadBox(e) : e.getBoundingBox();
         if (occam()) {
             Band band = bandAt(b, EYE_GLIDING, 0);
             if (band == null) return null;
