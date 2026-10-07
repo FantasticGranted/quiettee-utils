@@ -1160,7 +1160,7 @@ public class Lance extends Module {
         else { ox = oy = oz = 0; wireSyncWanted = true; dbg("skip handoff-sync"); return; }
 
         double lead = couchTiming.predictionTicks(PlayerUtils.getPing());
-        AABB b = target.getBoundingBox().move(vPos.subtract(target.position())).move(strikeVel().scale(lead));
+        AABB b = target.getBoundingBox().move(vPos.subtract(target.position())).move(strikeLead(lead));
         double cx = (b.minX + b.maxX) * 0.5, cz = (b.minZ + b.maxZ) * 0.5, head = b.maxY;
         AttackRange ar = weavingTier != null ? weavingRange : mc.player.getAttackRangeWith(mc.player.getMainHandItem());
         double effMax = ar != null ? ar.effectiveMaxRange(mc.player) : 4.5;
@@ -1349,6 +1349,19 @@ public class Lance extends Module {
         if (!targetLead.get()) return vVel;
         if (histLen >= 2) return hist[(histIdx - 1) & 7].subtract(hist[(histIdx - 2) & 7]);
         return Vec3.ZERO;
+    }
+
+    private Vec3 strikeLead(double ticks) {
+        if (!targetLead.get()) return vVel.scale(ticks);
+        if (histLen < 2) return Vec3.ZERO;
+        Vec3 v = hist[(histIdx - 1) & 7].subtract(hist[(histIdx - 2) & 7]);
+        if (histLen < 5) return v.scale(ticks);
+        Vec3 vNow = hist[(histIdx - 1) & 7].subtract(hist[(histIdx - 3) & 7]).scale(0.5);
+        Vec3 vPrev = hist[(histIdx - 3) & 7].subtract(hist[(histIdx - 5) & 7]).scale(0.5);
+        Vec3 a = vNow.subtract(vPrev);
+        double al = a.length();
+        if (al > 0.4) a = a.scale(0.4 / al);
+        return v.scale(ticks).add(a.scale(0.5 * ticks * (ticks - 1)));
     }
 
     private boolean kineticDamageReady(Vec3 movement, Vec3 axis) {

@@ -1180,7 +1180,7 @@ public class MaceSmash extends Module {
 
     private void cameraTick() {
         if (!cameraTrack.get() || target == null) return;
-        AABB b = target.getBoundingBox();
+        AABB b = targetLead.get() ? leadBox(target) : target.getBoundingBox();
         Vec3 c = new Vec3((b.minX + b.maxX) * 0.5, (b.minY + b.maxY) * 0.5, (b.minZ + b.maxZ) * 0.5);
         mc.player.setYRot((float) Rotations.getYaw(c));
         mc.player.setXRot((float) Mth.clamp(Rotations.getPitch(c), -90, 90));
@@ -1498,12 +1498,12 @@ public class MaceSmash extends Module {
 
         boolean aim = !occam() && (chain() ? restSet : (phase != Phase.Idle || strikeNow));
         if (faceTarget.get() && target != null && aim) {
-            AABB b = target.getBoundingBox();
+            AABB b = targetLead.get() ? leadBox(target) : target.getBoundingBox();
             double ex = mc.player.getX(), ez = mc.player.getZ();
             double ey = chain() ? restY - hopNow + EYE_GLIDING : mc.player.getY() + offset + eyeHeight();
             double dx = (b.minX + b.maxX) * 0.5 - ex, dy = (b.minY + b.maxY) * 0.5 - ey, dz = (b.minZ + b.maxZ) * 0.5 - ez;
             double pitch = -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
-            Rotations.rotate(Rotations.getYaw(target), Mth.clamp(pitch, -90, 90), 100);
+            Rotations.rotate(Rotations.getYaw(b.getCenter()), Mth.clamp(pitch, -90, 90), 100);
         }
     }
 
@@ -1750,9 +1750,31 @@ public class MaceSmash extends Module {
 
     private record OPlan(double top, double bot, Band band, AABB box) {}
 
+    private Vec3 leadVel = Vec3.ZERO, leadPrevVel = Vec3.ZERO;
+    private double leadOldX = Double.NaN, leadOldY = Double.NaN, leadOldZ = Double.NaN;
+    private int leadSamples;
+
     private AABB leadBox(Entity e) {
         double lead = Math.min(5.0, PlayerUtils.getPing() / 50.0);
-        return e.getBoundingBox().move((e.getX() - e.xOld) * lead, (e.getY() - e.yOld) * lead, (e.getZ() - e.zOld) * lead);
+        if (e.xOld != leadOldX || e.yOld != leadOldY || e.zOld != leadOldZ) {
+            leadPrevVel = leadVel;
+            leadVel = new Vec3(e.getX() - e.xOld, e.getY() - e.yOld, e.getZ() - e.zOld);
+            leadOldX = e.xOld;
+            leadOldY = e.yOld;
+            leadOldZ = e.zOld;
+            if (leadSamples < 8) leadSamples++;
+        }
+        double px = leadVel.x * lead, py = leadVel.y * lead, pz = leadVel.z * lead;
+        if (targetLead.get() && leadSamples >= 3) {
+            Vec3 a = leadVel.subtract(leadPrevVel);
+            double al = a.length();
+            if (al > 0.4) a = a.scale(0.4 / al);
+            double k = 0.5 * lead * (lead - 1.0);
+            px += a.x * k;
+            py += a.y * k;
+            pz += a.z * k;
+        }
+        return e.getBoundingBox().move(px, py, pz);
     }
 
     private int oRungsFit(OPlan p) {
