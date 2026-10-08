@@ -96,7 +96,7 @@ public class MaceSmash extends Module {
         .name("entities")
         .description("What to smash.")
         .onlyAttackable()
-        .defaultValue(EntityType.PLAYER, EntityType.SLIME, EntityType.ZOMBIE, EntityType.SKELETON, EntityType.CREEPER, EntityType.SPIDER, EntityType.IRON_GOLEM)
+        .defaultValue(EntityType.PLAYER, EntityType.SLIME, EntityType.ZOMBIE, EntityType.SKELETON, EntityType.CREEPER, EntityType.SPIDER, EntityType.IRON_GOLEM, EntityType.WITHER)
         .build()
     );
 
@@ -737,6 +737,7 @@ public class MaceSmash extends Module {
     private double hopNow;
     private int lostTicks;
     private int sinceSmash;
+    private int planLost;
     private int recentSetbacks;
     private int setbackDecay;
     private double altDiveY;
@@ -875,6 +876,7 @@ public class MaceSmash extends Module {
         summaryPending = false;
         swings = 0;
         smashThisTick = false;
+        planLost = 0;
         dumpThisTick = false;
         restMoved = false;
     }
@@ -2340,7 +2342,16 @@ public class MaceSmash extends Module {
             case Descend -> {
                 if (target == null || !target.isAlive() || (target instanceof LivingEntity le && le.isDeadOrDying())) { abort(); return; }
                 Plan p = plan(target, cycleTop);
-                if (p == null) { abort(); return; }
+                if (p == null) {
+                    if (band(target, eyeHeight()) == null && planLost++ < 40) {
+                        status = "chasing · out of strike range";
+                        return;
+                    }
+                    planLost = 0;
+                    abort();
+                    return;
+                }
+                planLost = 0;
                 strikeOffset = p.strikeOff;
                 descend(p);
             }

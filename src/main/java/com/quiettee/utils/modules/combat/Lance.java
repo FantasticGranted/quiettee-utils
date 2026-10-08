@@ -1214,7 +1214,9 @@ public class Lance extends Module {
             want = impact.add(axis.scale(0.3)); kind = "weave";
         } else if (couched && remaining == 0 && atLaunch && threat == null && attackRayClear(lane)) {
             want = impact;
-            capV = lane.horizontal() ? MAX_V : dip.get() + 0.05; aimIn = true; strike = true; kind = "STRIKE";
+            Vec3 strikeShift = strikeVel();
+            capH = MAX_H + Math.hypot(strikeShift.x, strikeShift.z);
+            capV = (lane.horizontal() ? MAX_V : dip.get() + 0.05) + Math.abs(strikeShift.y); aimIn = true; strike = true; kind = "STRIKE";
         } else if (capture && threat == null) {
             want = impact; kind = "capture";
         } else if (cycleTick >= period.get() - approachTicks && !(couched && cycleTick >= period.get() && threat != null)) {

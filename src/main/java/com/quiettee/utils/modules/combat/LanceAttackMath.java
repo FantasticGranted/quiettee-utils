@@ -44,13 +44,16 @@ final class LanceAttackMath {
         if (lane == null || !finite(feet) || !finite(targetVelocity) || !finite(lane.impact) || !finite(lane.launch)
             || !finite(lane.axis) || !Double.isFinite(dip) || dip <= 0 || !Double.isFinite(maxH) || maxH <= 0
             || !Double.isFinite(maxV) || maxV <= 0 || Math.abs(lane.axis.lengthSquared() - 1) > 1e-6) return false;
+        double shiftAxis = Math.abs(targetVelocity.dot(lane.axis));
+        double shiftY = Math.abs(targetVelocity.y);
+        double shiftH = Math.hypot(targetVelocity.x, targetVelocity.z);
         Point launchError = feet.subtract(lane.launch);
         if (lane.horizontal) {
-            if (Math.abs(launchError.dot(lane.axis)) > 0.4 + 1e-7 || Math.abs(launchError.y) > 0.4 + 1e-7) return false;
-        } else if (Math.abs(launchError.y) >= 0.15) return false;
+            if (Math.abs(launchError.dot(lane.axis)) > 0.4 + shiftAxis + 1e-7 || Math.abs(launchError.y) > 0.4 + shiftY + 1e-7) return false;
+        } else if (Math.abs(launchError.y) >= 0.15 + shiftY) return false;
         Point displacement = lane.impact.subtract(feet);
-        if (!finite(displacement) || Math.hypot(displacement.x, displacement.z) > maxH + 1e-7
-            || Math.abs(displacement.y) > maxV + 1e-7) return false;
+        if (!finite(displacement) || Math.hypot(displacement.x, displacement.z) > maxH + shiftH + 1e-7
+            || Math.abs(displacement.y) > maxV + shiftY + 1e-7) return false;
         double forward = displacement.dot(lane.axis);
         double relativeClosing = displacement.subtract(targetVelocity).dot(lane.axis);
         return Double.isFinite(forward) && Double.isFinite(relativeClosing)
